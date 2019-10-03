@@ -30,26 +30,30 @@ class Screen
     {
         nullptr, SDL_DestroyWindow
     };
-    unsigned width_, height_;
 
 public:
+    unsigned width = 0, height = 0;
+
     Screen(const std::string& title, unsigned w, unsigned h)
-        : width_  (w)
-        , height_ (h)
+        : width  (w)
+        , height (h)
     {
-        if (SDL_Init(SDL_INIT_VIDEO) < 0) handle_error("video init", SDL_GetError);
+        if (SDL_Init(SDL_INIT_VIDEO) < 0)
+            handle_error("video init", SDL_GetError);
         window_.reset(
             SDL_CreateWindow(title.c_str(),
                              SDL_WINDOWPOS_UNDEFINED,
                              SDL_WINDOWPOS_UNDEFINED,
-                             width_, height_,
+                             width, height,
                              SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE));
-        if (!window_) handle_error("create window", SDL_GetError);
+        if (!window_)
+            handle_error("create window", SDL_GetError);
         renderer_.reset(
             SDL_CreateRenderer(window_.get(),
                                -1,
                                SDL_RENDERER_ACCELERATED));
-        if (!renderer_) handle_error("create renderer", SDL_GetError);
+        if (!renderer_)
+            handle_error("create renderer", SDL_GetError);
     }
 
     // Manual destruction order: renderer -> window
@@ -60,17 +64,13 @@ public:
         SDL_Quit();
     }
 
-    inline void set_w(unsigned w) {  width_ = w; }
-    inline void set_h(unsigned h) { height_ = h; }
+    inline SDL_Renderer* get_renderer_mutable() const { return renderer_.get(); }
+
     inline void set_title(const std::string& title)
     {
         if (!title.empty())
             SDL_SetWindowTitle(window_.get(), title.c_str());
     }
-
-    inline int get_w() const { return  width_; }
-    inline int get_h() const { return height_; }
-    inline SDL_Renderer* get_renderer_mutable() const { return renderer_.get(); }
 };
 
 /**
@@ -87,7 +87,7 @@ class Image
     std::vector<std::string> images_;
 
 public:
-    enum class Roll_Flag { IMG_ROLL_REFR, IMG_ROLL_NEXT, IMG_ROLL_PREV };
+    enum class RollFlag { IMG_ROLL_REFR, IMG_ROLL_NEXT, IMG_ROLL_PREV };
 
     Image(const std::vector<std::string>& imgs) : images_(imgs)
     {
@@ -97,14 +97,22 @@ public:
 
     ~Image() { IMG_Quit(); }
 
+    // Gets the image name of the current roll index
+    inline std::string get_name() const
+        { return images_.size() ? fs::path(images_[roll_ix_]).filename() : ""; }
+
     // Resets current image roll with images of the dropped file's directory
     void reset_roll(const std::string& file)
     {
         int old_roll = roll_ix_, old_prev = prev_ix_, iter = 0;
         roll_ix_ = 0; prev_ix_ = -1;
 
-        std::string dir = fs::is_directory(file) ? file : fs::path(file).parent_path().string();
         std::vector<std::string> files;
+        std::string dir = fs::is_directory(file)
+                            ? file
+                            : fs::path(file)
+                                .parent_path()
+                                .string();
 
         for (const auto& p: fs::directory_iterator(dir))
             if (p.path().extension() == ".png")
@@ -120,14 +128,14 @@ public:
     }
 
     // Loads & renders image on specific roll flags. Simply renders current image by default
-    void roll_image(SDL_Renderer* renderer, int screen_w, int screen_h, Roll_Flag flag)
+    void roll_image(SDL_Renderer* renderer, int screen_w, int screen_h, RollFlag flag)
     {
         if (!images_.size()) return;
         switch (flag)
         {
-        case Roll_Flag::IMG_ROLL_PREV: roll_ix_ = ((roll_ix_ - 1) + images_.size()) % images_.size(); break;
-        case Roll_Flag::IMG_ROLL_NEXT: roll_ix_ =  (roll_ix_ + 1) % images_.size(); break;
-        case Roll_Flag::IMG_ROLL_REFR:
+        case RollFlag::IMG_ROLL_PREV: roll_ix_ = ((roll_ix_ - 1) + images_.size()) % images_.size(); break;
+        case RollFlag::IMG_ROLL_NEXT: roll_ix_ =  (roll_ix_ + 1) % images_.size(); break;
+        case RollFlag::IMG_ROLL_REFR:
         default: break;
         }
         // Only loads images on dirty rolls
@@ -139,10 +147,6 @@ public:
         render_image(renderer, screen_w, screen_h);
     }
 
-    // Gets the image name of the current roll index
-    inline std::string get_name() const
-        { return images_.size() ? fs::path(images_[roll_ix_]).filename() : ""; }
-
 private:
     void render_image(SDL_Renderer* renderer, int screen_w, int screen_h)
     {
@@ -153,8 +157,8 @@ private:
         if (pos.w > screen_w || pos.h > screen_h)
         {
             double scale_factor =
-                std::max(static_cast<double>(pos.w) / screen_w,
-                         static_cast<double>(pos.h) / screen_h);
+                std::max( static_cast<double>(pos.w) / screen_w,
+                          static_cast<double>(pos.h) / screen_h );
             pos.w /= scale_factor;
             pos.h /= scale_factor;
         }
@@ -177,14 +181,16 @@ private:
 
 static void event_loop(Screen& screen, Image& img)
 {
-    bool quit = false, update_title = false;
-    using Roll_Flag = Image::Roll_Flag;
+    using RollFlag = Image::RollFlag;
 
-    auto roll_handler = [&](Roll_Flag flag)
+    bool update_title = false,
+         quit = false;
+
+    auto roll_handler = [&](RollFlag flag)
     {
         img.roll_image(screen.get_renderer_mutable(),
-                       screen.get_w(),
-                       screen.get_h(),
+                       screen.width,
+                       screen.height,
                        flag);
         if (update_title)
             screen.set_title(img.get_name());
@@ -195,12 +201,12 @@ static void event_loop(Screen& screen, Image& img)
         switch (e.window.event)
         {
         case SDL_WINDOWEVENT_SIZE_CHANGED:
-            screen.set_w(e.window.data1); screen.set_h(e.window.data2);
-            roll_handler(Roll_Flag::IMG_ROLL_REFR);
+            screen.width = e.window.data1; screen.height = e.window.data2;
+            roll_handler(RollFlag::IMG_ROLL_REFR);
             update_title = false;
             break;
         case SDL_WINDOWEVENT_SHOWN:
-            roll_handler(Roll_Flag::IMG_ROLL_REFR);
+            roll_handler(RollFlag::IMG_ROLL_REFR);
             update_title = true;
             break;
         }
@@ -211,11 +217,11 @@ static void event_loop(Screen& screen, Image& img)
         switch (e.key.keysym.sym)
         {
         case SDLK_LEFT:
-            roll_handler(Roll_Flag::IMG_ROLL_PREV);
+            roll_handler(RollFlag::IMG_ROLL_PREV);
             update_title = true;
             break;
         case SDLK_RIGHT:
-            roll_handler(Roll_Flag::IMG_ROLL_NEXT);
+            roll_handler(RollFlag::IMG_ROLL_NEXT);
             update_title = true;
             break;
         }
@@ -237,7 +243,7 @@ static void event_loop(Screen& screen, Image& img)
             break;
         case SDL_DROPFILE:
             img.reset_roll(std::string(event.drop.file));
-            roll_handler(Roll_Flag::IMG_ROLL_REFR);
+            roll_handler(RollFlag::IMG_ROLL_REFR);
             update_title = true;
             break;
         }
